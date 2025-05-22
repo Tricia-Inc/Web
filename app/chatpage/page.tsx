@@ -15,12 +15,23 @@ function ChatRoom() {
   const [cameraActive, setCameraActive] = useState(false)
   const [showCamera, setShowCamera] = useState(false)
   const [isOrbActive, setIsOrbActive] = useState(false)
+  const [statusMessage, setStatusMessage] = useState<{text: string, type: 'success'|'error'|null}>({text: '', type: null})
 
   // Connect to a default chat room on component mount
   useEffect(() => {
     const defaultRoom = "default-chat-room"
     connect(defaultRoom)
   }, [connect])
+
+  // Clear status message after timeout
+  useEffect(() => {
+    if (statusMessage.text) {
+      const timer = setTimeout(() => {
+        setStatusMessage({text: '', type: null})
+      }, 3000)
+      return () => clearTimeout(timer)
+    }
+  }, [statusMessage])
 
   const handleCameraClick = () => {
     // If camera is already open, just toggle animation
@@ -54,14 +65,16 @@ function ChatRoom() {
       const enabled = await toggleMicrophone()
       // Update UI state
       setIsOrbActive(enabled)
-      if (enabled) {
-        alert("Voice activated")
-      } else {
-        alert("Voice muted")
-      }
+      setStatusMessage({
+        text: enabled ? "Voice activated" : "Voice muted",
+        type: 'success'
+      })
     } catch (err) {
       console.error("Error toggling microphone:", err)
-      alert("Failed to toggle microphone")
+      setStatusMessage({
+        text: "Failed to toggle microphone",
+        type: 'error'
+      })
     }
   }
 
@@ -192,7 +205,20 @@ function ChatRoom() {
         <CameraView isOpen={showCamera} onClose={handleCloseCamera} />
       </div>
 
-      {/* Connection status indicator (optional) */}
+      {/* Status message toast */}
+      {statusMessage.text && (
+        <div className="absolute bottom-24 left-0 right-0 flex justify-center">
+          <div className={`px-4 py-2 rounded-full text-sm font-medium ${
+            statusMessage.type === 'error' 
+              ? 'bg-red-100 text-red-800' 
+              : 'bg-green-100 text-green-800'
+          }`}>
+            {statusMessage.text}
+          </div>
+        </div>
+      )}
+
+      {/* Connection status indicator */}
       {!isConnected && (
         <div className="absolute bottom-24 left-0 right-0 flex justify-center">
           <div className="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-xs">
