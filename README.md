@@ -16,6 +16,7 @@ A modern, real-time voice chat application built with Next.js 14 and LiveKit.
 - **Styling**: Tailwind CSS
 - **Voice Communication**: LiveKit
 - **Authentication**: Next.js built-in auth
+- **Backend Services**: Managed by Weshine Technology Co., Ltd.
 
 ## Getting Started
 
@@ -101,6 +102,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Ownership
 
 Copyright (c) May 21, 2025 Tricia, Inc. - Ian Wu
+
+### Backend Services
+Backend services are managed by 偉迅科技股份有限公司  
+Copyright © Weshine Technology Co., Ltd. All Rights Reserved
 
 ## Acknowledgments
 
