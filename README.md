@@ -28,7 +28,7 @@ A modern, real-time voice chat application built with Next.js 14 and LiveKit.
 
 1. Clone the repository
    ```bash
-   git clone https://github.com/your-username/tricia-web.git
+   git clone https://github.com/Tricia-Inc/tricia-web.git
    cd tricia-web
    ```
 
@@ -97,6 +97,10 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Ownership
+
+Copyright (c) May 21, 2025 Tricia, Inc. - Ian Wu
 
 ## Acknowledgments
 
