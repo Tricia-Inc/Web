@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { AccessToken } from 'livekit-server-sdk';
 
 // Helper function to validate environment variables
 function validateEnvVars() {
@@ -28,30 +29,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Room name is required' }, { status: 400 });
     }
 
-    // For development mode, use a mock token
-    if (process.env.NODE_ENV === 'development' && !process.env.LIVEKIT_API_KEY) {
-      console.warn('Using mock LiveKit token in development. For production, set LIVEKIT_API_KEY and LIVEKIT_API_SECRET.');
-      return NextResponse.json({
-        token: `mock-token-for-${roomName}-${Date.now()}`,
-        serverUrl: process.env.NEXT_PUBLIC_LIVEKIT_URL || 'wss://example.livekit.cloud',
-      });
-    }
-    
-    // Validate environment variables for production
+    // Validate environment variables
     if (!validateEnvVars()) {
+      console.warn('LiveKit environment variables not set properly. Check your .env.local file.');
       return NextResponse.json(
         { error: 'Server configuration error' },
         { status: 500 }
       );
     }
     
-    // For production, use the LiveKit server SDK to generate a real token
-    // This code should be uncommented and properly configured for production
-    /*
-    import { AccessToken } from 'livekit-server-sdk';
-    
-    const apiKey = process.env.LIVEKIT_API_KEY;
-    const apiSecret = process.env.LIVEKIT_API_SECRET;
+    // Use the LiveKit server SDK to generate a real token
+    const apiKey = process.env.LIVEKIT_API_KEY as string;
+    const apiSecret = process.env.LIVEKIT_API_SECRET as string;
     const userIdentity = identity || `user-${Date.now()}`;
     
     // Create token with appropriate permissions
@@ -71,13 +60,6 @@ export async function POST(request: Request) {
     return NextResponse.json({
       token: token.toJwt(),
       serverUrl: process.env.NEXT_PUBLIC_LIVEKIT_URL,
-    });
-    */
-    
-    // Return a mock token for now - REPLACE THIS WITH ACTUAL TOKEN GENERATION
-    return NextResponse.json({
-      token: `mock-token-for-${roomName}-${Date.now()}`,
-      serverUrl: process.env.NEXT_PUBLIC_LIVEKIT_URL || 'wss://example.livekit.cloud',
     });
   } catch (error) {
     console.error('Error generating token:', error);

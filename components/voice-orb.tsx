@@ -168,7 +168,10 @@ const VoiceOrbLayer = ({
 // Main VoiceOrbWrapper component
 export const VoiceOrbWrapper = ({ isActive = false, onClick = () => {} }) => {
   const [isAnimating, setIsAnimating] = useState(isActive)
-  const { audioLevel, isMicrophoneEnabled } = useLiveKit()
+  // Safely handle null/undefined values from LiveKit context
+  const liveKit = useLiveKit();
+  const audioLevel = liveKit?.audioLevel || 0;
+  const isMicrophoneEnabled = liveKit?.isMicrophoneEnabled || false;
   
   // Calculate animation intensity based on audio level
   const [intensity, setIntensity] = useState(1)

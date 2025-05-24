@@ -6,51 +6,161 @@ import { useRouter } from "next/navigation"
 import { useState, useEffect, useRef } from "react"
 import { MobileLayout } from "@/components/mobile-layout"
 import Image from "next/image"
+import { LiveKitProvider, useLiveKit } from "@/lib/livekit-context"
 
-export default function JournalPreviewPage() {
+interface JournalContent {
+  title: string
+  date: string
+  location: string
+  content: string
+  images?: string[]
+  metadata?: {
+    people?: string[]
+    emotion?: string
+    narrative?: string
+  }
+}
+
+// Component that handles journal preview with LiveKit connection
+function JournalPreviewContent() {
   const router = useRouter()
+  const { isConnected, performRpc, room } = useLiveKit()
   const [capturedImages, setCapturedImages] = useState<string[]>([])
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
   const [scrollY, setScrollY] = useState(0)
   const [isMuted, setIsMuted] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const startXRef = useRef(0)
   const startYRef = useRef(0)
   const isScrollingRef = useRef(false)
-  const [journalData, setJournalData] = useState({
+  const [journalData, setJournalData] = useState<JournalContent>({
     title: "My grandson's new puppy",
     date: "Jan. 2nd, 2025",
     location: "Santa Barbara",
+    content: "",
   })
 
-  // In a real app, you would get the captured images from a state management solution
+  // Get journal data from sessionStorage or RPC
   useEffect(() => {
-    // Get journal data from localStorage (as if it was created in the profile page)
-    const journalTitle = localStorage.getItem("journalTitle") || "My grandson's new puppy"
-    const journalDate = localStorage.getItem("journalDate") || "Jan. 2nd, 2025"
-    const journalLocation = localStorage.getItem("journalLocation") || "Santa Barbara"
+    // Try to get journal data from sessionStorage (set by RPC)
+    const journalPreviewData = sessionStorage.getItem("journalPreview")
+    
+    if (journalPreviewData) {
+      try {
+        const parsedData = JSON.parse(journalPreviewData)
+        console.log("JournalPreview: Loaded journal data from RPC:", parsedData)
+        
+        setJournalData({
+          title: parsedData.title || "Untitled Story",
+          date: parsedData.date || new Date().toLocaleDateString(),
+          location: parsedData.location || "Unknown Location",
+          content: parsedData.content || parsedData.narrative || "",
+          images: parsedData.images || [],
+          metadata: {
+            people: parsedData.people || [],
+            emotion: parsedData.emotion || "",
+            narrative: parsedData.narrative || ""
+          }
+        })
+        
+        // Set images if available
+        if (parsedData.images && parsedData.images.length > 0) {
+          setCapturedImages(parsedData.images)
+        }
+        
+        // Don't clear session storage here - keep it for potential re-edits
+      } catch (err) {
+        console.error("JournalPreview: Error parsing journal data:", err)
+      }
+    } else {
+      // Fallback content for demo
+      setJournalData({
+        title: "My grandson's new puppy",
+        date: "Jan. 2nd, 2025",
+        location: "Santa Barbara",
+        content: `When my grandson brought home a tiny white puppy named Max, I wasn't sure what to expect. The little furball looked like a snowflake with legs—soft, wiggly, and full of energy. My grandson was beaming with pride, and I could see right away how much he loved that pup. Max quickly made himself at home, exploring every corner of the house, tripping over his own feet, and wagging his tail like he was on a mission to spread joy.
 
-    // Set state with the journal data
-    setJournalData({
-      title: journalTitle,
-      date: journalDate,
-      location: journalLocation,
-    })
+At first, I thought he'd just be another handful. I've raised dogs before, and I know how much work they can be. But there's something special about Max. He follows my grandson everywhere, looking up at him with those big brown eyes full of adoration.
 
-    // Simulate retrieving captured images
-    const storedImage = localStorage.getItem("lastCapturedImage")
-    const defaultImages = [
-      "/back-camera-view.png",
-      "/front-camera-view.png",
-      "/serene-nature-landscape.png",
-      "/cute-puppy.jpg",
-    ]
+Yesterday, I watched them playing in the backyard. Max was chasing a ball, his little legs working overtime to keep up with his enthusiasm. When he finally caught it, he brought it right back to my grandson, tail wagging so hard his whole body shook. The pure joy on both their faces was something to behold.
 
-    // Use stored image as first if available, then add defaults
-    const images = storedImage ? [storedImage, ...defaultImages.filter((img) => img !== storedImage)] : defaultImages
+I've noticed that having Max around has given my grandson a sense of responsibility. He makes sure the water bowl is always full, that Max gets his meals on time, and he's even set alarms on his phone to remember when it's time for walks. It's wonderful to see him growing through this experience.
 
-    setCapturedImages(images)
+I have to admit, Max has won me over too. Last night, he curled up next to me on the couch while we watched TV, his warm little body snuggled against my leg. There's something so comforting about having him there. I think he's going to be a wonderful addition to our family.`,
+      })
+    }
+
+    // Set default images if none were provided
+    if (capturedImages.length === 0) {
+      const storedImage = localStorage.getItem("lastCapturedImage")
+      const defaultImages = [
+        "/back-camera-view.png",
+        "/front-camera-view.png",
+        "/serene-nature-landscape.png",
+        "/cute-puppy.jpg",
+      ]
+
+      const images = storedImage ? [storedImage, ...defaultImages.filter((img) => img !== storedImage)] : defaultImages
+      setCapturedImages(images)
+    }
   }, [])
+
+  // Connect to existing LiveKit room if available
+  useEffect(() => {
+    // Check if we're already connected from the chat page
+    if (room && !isConnected) {
+      console.log("JournalPreview: Reconnecting to existing room")
+      // Room already exists, just use it
+    }
+  }, [room, isConnected])
+
+  const handleSaveJournal = async () => {
+    if (!isConnected || !performRpc) {
+      alert("Not connected to agent. Please go back to chat page.")
+      return
+    }
+    
+    try {
+      setIsSaving(true)
+      console.log("JournalPreview: Saving journal via RPC")
+      
+      // Call backend's user.save_journal method
+      const response = await performRpc('user.save_journal', {
+        timestamp: new Date().toISOString()
+      })
+      
+      console.log("JournalPreview: Save journal response:", response)
+      
+      if (response && !response.error) {
+        // Clear the session storage after successful save
+        sessionStorage.removeItem('journalPreview')
+        
+        // Show success and navigate back
+        alert("Journal saved successfully!")
+        router.push("/chatpage")
+      } else {
+        throw new Error(response?.error || "Failed to save journal")
+      }
+      
+    } catch (err) {
+      console.error("JournalPreview: Error saving journal:", err)
+      alert(err instanceof Error ? err.message : "Failed to save journal")
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleMicrophoneClick = () => {
+    if (isSaving) return // Don't toggle while saving
+    
+    // If we want to save the journal
+    if (!isMuted) {
+      handleSaveJournal()
+    } else {
+      setIsMuted(false)
+    }
+  }
 
   const handleTouchStart = (e: React.TouchEvent) => {
     startXRef.current = e.touches[0].clientX
@@ -90,15 +200,6 @@ export default function JournalPreviewPage() {
   const handleScroll = () => {
     if (containerRef.current) {
       setScrollY(containerRef.current.scrollTop)
-    }
-  }
-
-  const handleMicrophoneClick = () => {
-    setIsMuted(!isMuted)
-    if (isMuted) {
-      alert("Voice activated")
-    } else {
-      alert("Voice muted")
     }
   }
 
@@ -170,44 +271,22 @@ export default function JournalPreviewPage() {
         className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-50 w-20 h-20 flex items-center justify-center"
         onClick={handleMicrophoneClick}
         style={{ marginBottom: "20px", filter: "drop-shadow(0px 0px 25px #876EE4)" }}
+        disabled={isSaving}
       >
-        <div className={`absolute inset-0 rounded-full ${isMuted ? "bg-[#828282]" : "bg-[#2b2b2b]"}`}></div>
-        {isMuted ? (
-          <svg
-            width="45"
-            height="45"
-            viewBox="0 0 45 45"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            className="relative z-10"
-          >
-            <path
-              d="M17.2046 6.30757C18.362 5.1502 19.9317 4.5 21.5685 4.5C23.2053 4.5 24.775 5.1502 25.9324 6.30757C27.0897 7.46494 27.7399 9.03466 27.7399 10.6714V16.875M7.3125 20.9571C7.81093 24.3818 9.52572 27.5126 12.1432 29.7767C14.7606 32.0407 18.1057 33.2867 21.5664 33.2867M21.5664 33.2867C25.0272 33.2867 28.3723 32.0407 30.9897 29.7767C33.6072 27.5126 35.322 24.3818 35.8204 20.9571M21.5664 33.2867V40.5M15.3971 14.625V18.9C15.3971 20.5368 16.0473 22.1065 17.2046 23.2639C18.362 24.4212 19.9317 25.0714 21.5685 25.0714C22.6157 25.0714 23.6355 24.8053 24.5373 24.3104M6.1875 4.5L38.8125 37.125"
-              stroke="#E88383"
-              strokeWidth="4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+        <div className={`absolute inset-0 rounded-full ${isSaving ? "bg-[#828282]" : "bg-[#876EE4]"}`}></div>
+        {isSaving ? (
+          <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin" />
         ) : (
-          <svg
-            width="45"
-            height="45"
-            viewBox="0 0 45 45"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            className="relative z-10"
-          >
-            <path
-              d="M8.24609 20.9571C8.74452 24.3818 10.4593 27.5126 13.0767 29.7767C15.6942 32.0407 19.0393 33.2867 22.5 33.2867M22.5 33.2867C25.9608 33.2867 29.3059 32.0407 31.9233 29.7767C34.5408 27.5126 36.2556 24.3818 36.754 20.9571M22.5 33.2867V40.5M22.5021 4.5C20.8653 4.5 19.2956 5.1502 18.1382 6.30757C16.9809 7.46494 16.3307 9.03466 16.3307 10.6714V18.9C16.3307 20.5368 16.9809 22.1065 18.1382 23.2639C19.2956 24.4212 20.8653 25.0714 22.5021 25.0714C24.1389 25.0714 25.7086 24.4212 26.866 23.2639C28.0233 22.1065 28.6735 20.5368 28.6735 18.9V10.6714C28.6735 9.03466 28.0233 7.46494 26.866 6.30757C25.7086 5.1502 24.1389 4.5 22.5021 4.5Z"
-              stroke="#F4F4F4"
-              strokeWidth="4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <span className="text-white font-medium z-10">SAVE</span>
         )}
       </button>
+
+      {/* Connection status */}
+      {!isConnected && (
+        <div className="absolute top-24 right-8 bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-xs">
+          Not connected to agent
+        </div>
+      )}
 
       <div
         ref={containerRef}
@@ -290,39 +369,37 @@ export default function JournalPreviewPage() {
             <span className="mx-4">{journalData.location}</span>
           </div>
 
+          {/* People involved (if available from RPC) */}
+          {journalData.metadata?.people && journalData.metadata.people.length > 0 && (
+            <div className="text-[16px] text-[#9f9f9f] mb-6">
+              <span className="font-medium">People: </span>
+              {journalData.metadata.people.join(", ")}
+            </div>
+          )}
+
+          {/* Emotion tag (if available from RPC) */}
+          {journalData.metadata?.emotion && (
+            <div className="inline-block bg-[#e3dff5] text-[#876EE4] px-4 py-2 rounded-full text-[14px] mb-6">
+              {journalData.metadata.emotion}
+            </div>
+          )}
+
           {/* Journal Content */}
           <div className="text-[18px] text-[#2b2b2b] leading-relaxed space-y-6">
-            <p>
-              When my grandson brought home a tiny white puppy named Max, I wasn't sure what to expect. The little
-              furball looked like a snowflake with legs—soft, wiggly, and full of energy. My grandson was beaming with
-              pride, and I could see right away how much he loved that pup. Max quickly made himself at home, exploring
-              every corner of the house, tripping over his own feet, and wagging his tail like he was on a mission to
-              spread joy.
-            </p>
-            <p>
-              At first, I thought he'd just be another handful. I've raised dogs before, and I know how much work they
-              can be. But there's something special about Max. He follows my grandson everywhere, looking up at him with
-              those big brown eyes full of adoration.
-            </p>
-            <p>
-              Yesterday, I watched them playing in the backyard. Max was chasing a ball, his little legs working
-              overtime to keep up with his enthusiasm. When he finally caught it, he brought it right back to my
-              grandson, tail wagging so hard his whole body shook. The pure joy on both their faces was something to
-              behold.
-            </p>
-            <p>
-              I've noticed that having Max around has given my grandson a sense of responsibility. He makes sure the
-              water bowl is always full, that Max gets his meals on time, and he's even set alarms on his phone to
-              remember when it's time for walks. It's wonderful to see him growing through this experience.
-            </p>
-            <p>
-              I have to admit, Max has won me over too. Last night, he curled up next to me on the couch while we
-              watched TV, his warm little body snuggled against my leg. There's something so comforting about having him
-              there. I think he's going to be a wonderful addition to our family.
-            </p>
+            {journalData.content.split('\n\n').map((paragraph, index) => (
+              <p key={index}>{paragraph}</p>
+            ))}
           </div>
         </div>
       </div>
     </MobileLayout>
+  )
+}
+
+export default function JournalPreviewPage() {
+  return (
+    <LiveKitProvider>
+      <JournalPreviewContent />
+    </LiveKitProvider>
   )
 }

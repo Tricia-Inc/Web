@@ -1,27 +1,305 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { MobileLayout } from "@/components/mobile-layout"
 import { CameraView } from "@/components/camera-view"
 import { VoiceOrbWrapper } from "@/components/voice-orb"
 import { LiveKitProvider, useLiveKit } from "@/lib/livekit-context"
 import Image from "next/image"
+import { Track, RemoteParticipant, RemoteTrack, RemoteTrackPublication } from "livekit-client"
+
+// Agent ID configuration - could come from environment variables or user selection
+const DEFAULT_AGENT_ID = "aa0b0d4e-bc28-4e4e-88c1-40b829b6fb9d"
+const DEFAULT_USER_ID = "Xe9nkrHVetU1lHiK8wt7Ujf6SrH3"
+
+// Remote audio player component
+function RemoteAudioPlayer() {
+  const { room } = useLiveKit()
+  const audioElementRef = useRef<HTMLAudioElement>(null)
+  
+  useEffect(() => {
+    if (!room) return
+    
+    console.log("RemoteAudio: Setting up audio track handlers")
+    
+    // Function to handle new audio tracks
+    const handleTrackSubscribed = (
+      track: RemoteTrack,
+      publication: RemoteTrackPublication,
+      participant: RemoteParticipant
+    ) => {
+      console.log("RemoteAudio: Track subscribed:", {
+        kind: track.kind,
+        name: publication.trackName,
+        participant: participant.identity
+      })
+      
+      // Only process audio tracks
+      if (track.kind !== Track.Kind.Audio) return
+      
+      console.log("RemoteAudio: Audio track detected, attaching to audio element")
+      
+      // Create audio element if not exists
+      if (!audioElementRef.current) {
+        const audioEl = document.createElement('audio')
+        audioEl.autoplay = true
+        audioEl.muted = false
+        audioEl.volume = 1.0
+        document.body.appendChild(audioEl)
+        audioElementRef.current = audioEl
+        console.log("RemoteAudio: Created new audio element")
+      }
+      
+      // Attach track to audio element
+      track.attach(audioElementRef.current)
+      console.log("RemoteAudio: Attached track to audio element")
+    }
+    
+    // Function to handle track unsubscribed
+    const handleTrackUnsubscribed = (track: RemoteTrack) => {
+      console.log("RemoteAudio: Track unsubscribed")
+      
+      if (track.kind === Track.Kind.Audio && audioElementRef.current) {
+        track.detach(audioElementRef.current)
+        console.log("RemoteAudio: Detached track from audio element")
+      }
+    }
+    
+    // Register event handlers for all existing participants
+    if (room.remoteParticipants) {
+      room.remoteParticipants.forEach((participant: RemoteParticipant) => {
+        console.log("RemoteAudio: Checking existing participant:", participant.identity)
+        
+        // Get all audio tracks from the participant
+        const audioTracks = Array.from(participant.getTrackPublications().values())
+          .filter(pub => pub.kind === Track.Kind.Audio)
+        
+        audioTracks.forEach((publication) => {
+          if (publication.isSubscribed && publication.track) {
+            // Safe to cast here as we filtered for audio tracks above
+            handleTrackSubscribed(
+              publication.track as RemoteTrack, 
+              publication as RemoteTrackPublication, 
+              participant
+            )
+          }
+        })
+      })
+    }
+    
+    // Register event listeners for new tracks
+    room.on('trackSubscribed', handleTrackSubscribed)
+    room.on('trackUnsubscribed', handleTrackUnsubscribed)
+    
+    return () => {
+      console.log("RemoteAudio: Cleaning up event listeners")
+      // Clean up event listeners
+      room.off('trackSubscribed', handleTrackSubscribed)
+      room.off('trackUnsubscribed', handleTrackUnsubscribed)
+      
+      // Clean up audio element
+      if (audioElementRef.current) {
+        const audioEl = audioElementRef.current
+        if (audioEl.parentNode) {
+          audioEl.parentNode.removeChild(audioEl)
+        }
+        audioElementRef.current = null
+      }
+    }
+  }, [room])
+  
+  return null // This component doesn't render anything visible
+}
 
 // ChatRoom component with LiveKit integration
 function ChatRoom() {
   const router = useRouter()
-  const { toggleMicrophone, isMicrophoneEnabled, connect, isConnected } = useLiveKit()
+  const { 
+    toggleMicrophone, 
+    isMicrophoneEnabled, 
+    connect, 
+    isConnected, 
+    isConnecting, 
+    error, 
+    room,
+    registerRpcMethod,
+    performRpc
+  } = useLiveKit()
   const [cameraActive, setCameraActive] = useState(false)
   const [showCamera, setShowCamera] = useState(false)
   const [isOrbActive, setIsOrbActive] = useState(false)
   const [statusMessage, setStatusMessage] = useState<{text: string, type: 'success'|'error'|null}>({text: '', type: null})
+  const [agentDetected, setAgentDetected] = useState(false)
+  const [agentActive, setAgentActive] = useState(false)
+  const [userId] = useState(DEFAULT_USER_ID) // Use the specified user ID
+  const [isGeneratingJournal, setIsGeneratingJournal] = useState(false)
 
-  // Connect to a default chat room on component mount
+  // Connect to a chat with the agent when component mounts
   useEffect(() => {
-    const defaultRoom = "default-chat-room"
-    connect(defaultRoom)
-  }, [connect])
+    // Only try to connect if the room object is available (created on client-side)
+    if (room) {
+      // Generate unique session/chat identifier
+      const chatRoomId = `chat-${Date.now()}`
+      console.log("ChatPage: Creating chat with agent:", DEFAULT_AGENT_ID)
+      console.log("ChatPage: Using user ID:", userId)
+      
+      // Connect with unique user ID to ensure consistent identity
+      connect(chatRoomId, userId, DEFAULT_AGENT_ID)
+    }
+  }, [connect, room, userId])
+
+  // Register RPC methods when connected
+  useEffect(() => {
+    if (!isConnected || !registerRpcMethod) return
+    
+    console.log("ChatPage: Registering RPC methods")
+    
+    // Backend calls this when journal is generated
+    registerRpcMethod('agent.journal_generated', async (data) => {
+      console.log("ChatPage: Received journal via RPC (agent.journal_generated):", data)
+      
+      try {
+        // Parse the data - backend sends JSON string in payload
+        const parsedData = typeof data.payload === 'string' ? JSON.parse(data.payload) : data.payload
+        
+        console.log("ChatPage: Parsed journal data:", parsedData)
+        
+        // Store journal data in session storage for the preview page
+        sessionStorage.setItem('journalPreview', JSON.stringify(parsedData))
+        
+        // Navigate to journal preview page
+        setStatusMessage({
+          text: "Journal generated! Redirecting...",
+          type: 'success'
+        })
+        
+        setTimeout(() => {
+          router.push("/journal-preview")
+        }, 1000)
+        
+        return JSON.stringify({ status: "success", message: "Journal preview received" })
+      } catch (err) {
+        console.error("ChatPage: Error handling journal preview:", err)
+        return JSON.stringify({ status: "error", message: String(err) })
+      }
+    })
+    
+    // Backend calls this when journal is saved
+    registerRpcMethod('agent.journal_saved', async (data) => {
+      console.log("ChatPage: Received journal saved notification via RPC:", data)
+      
+      try {
+        const parsedData = typeof data.payload === 'string' ? JSON.parse(data.payload) : data.payload
+        
+        setStatusMessage({
+          text: "Journal saved successfully!",
+          type: 'success'
+        })
+        
+        // Optionally navigate to a success page or stay on current page
+        // router.push("/profile") // or wherever you want to go after save
+        
+        return JSON.stringify({ status: "success", message: "Journal saved notification received" })
+      } catch (err) {
+        console.error("ChatPage: Error handling journal saved:", err)
+        return JSON.stringify({ status: "error", message: String(err) })
+      }
+    })
+    
+  }, [isConnected, registerRpcMethod, router])
+
+  // Display connection error to the user
+  useEffect(() => {
+    if (error) {
+      console.error("ChatPage: Connection error:", error.message)
+      setStatusMessage({
+        text: `Connection error: ${error.message.substring(0, 50)}${error.message.length > 50 ? '...' : ''}`,
+        type: 'error'
+      })
+    }
+  }, [error])
+
+  // Monitor for agent participants
+  useEffect(() => {
+    if (!room || !isConnected) {
+      setAgentDetected(false)
+      setAgentActive(false)
+      return
+    }
+
+    // Check for existing remote participants when we connect
+    const checkForAgent = () => {
+      const remoteParticipants = room.remoteParticipants
+      console.log("ChatPage: Remote participants:", remoteParticipants)
+      
+      // Consider any remote participant as a potential agent
+      if (remoteParticipants && remoteParticipants.size > 0) {
+        console.log("ChatPage: Agent detected in room")
+        setAgentDetected(true)
+        
+        // Check if any remote participant has active audio tracks
+        let hasActiveAudio = false
+        remoteParticipants.forEach(participant => {
+          // Use getTrackPublications to get all track publications
+          const audioPublications = participant.getTrackPublications().filter(
+            publication => publication.kind === 'audio'
+          )
+          
+          audioPublications.forEach(publication => {
+            if (publication.track && !publication.isMuted) {
+              console.log("ChatPage: Agent has active audio track")
+              hasActiveAudio = true
+            }
+          })
+        })
+        
+        setAgentActive(hasActiveAudio)
+      } else {
+        console.log("ChatPage: No agent detected in room")
+        setAgentDetected(false)
+        setAgentActive(false)
+      }
+    }
+    
+    // Check initially
+    checkForAgent()
+    
+    // Set up listeners for participant changes
+    const handleParticipantConnected = () => {
+      console.log("ChatPage: A new participant connected")
+      checkForAgent()
+    }
+    
+    const handleParticipantDisconnected = () => {
+      console.log("ChatPage: A participant disconnected")
+      checkForAgent()
+    }
+    
+    const handleTrackSubscribed = () => {
+      console.log("ChatPage: New track subscribed")
+      checkForAgent()
+    }
+    
+    const handleTrackUnsubscribed = () => {
+      console.log("ChatPage: Track unsubscribed")
+      checkForAgent()
+    }
+    
+    // Add listeners
+    room.on('participantConnected', handleParticipantConnected)
+    room.on('participantDisconnected', handleParticipantDisconnected)
+    room.on('trackSubscribed', handleTrackSubscribed)
+    room.on('trackUnsubscribed', handleTrackUnsubscribed)
+    
+    return () => {
+      // Remove listeners
+      room.off('participantConnected', handleParticipantConnected)
+      room.off('participantDisconnected', handleParticipantDisconnected)
+      room.off('trackSubscribed', handleTrackSubscribed)
+      room.off('trackUnsubscribed', handleTrackUnsubscribed)
+    }
+  }, [room, isConnected])
 
   // Clear status message after timeout
   useEffect(() => {
@@ -31,9 +309,9 @@ function ChatRoom() {
       }, 3000)
       return () => clearTimeout(timer)
     }
-  }, [statusMessage])
+  }, [statusMessage.text])
 
-  const handleCameraClick = () => {
+  const handleCameraClick = async () => {
     // If camera is already open, just toggle animation
     if (showCamera) {
       setCameraActive(true)
@@ -51,9 +329,50 @@ function ChatRoom() {
     setShowCamera(false)
   }
 
-  const handleJournalClick = () => {
-    // Navigate to journal preview page
-    router.push("/journal-preview")
+  const handleJournalClick = async () => {
+    if (!isConnected || !performRpc || !agentDetected) {
+      setStatusMessage({
+        text: "Please wait for agent to connect",
+        type: 'error'
+      })
+      return
+    }
+    
+    try {
+      setIsGeneratingJournal(true)
+      setStatusMessage({
+        text: "Generating journal...",
+        type: 'success'
+      })
+      
+      console.log("ChatPage: Requesting journal generation via RPC")
+      
+      // Call backend's user.generate_journal method
+      const response = await performRpc('user.generate_journal', {
+        user_id: userId,
+        timestamp: new Date().toISOString()
+      })
+      
+      console.log("ChatPage: Journal generation response:", response)
+      
+      // Backend will send the journal via agent.journal_generated RPC
+      // Response contains the journal data
+      if (response && !response.error) {
+        // Journal was generated successfully
+        console.log("ChatPage: Journal generated successfully")
+      } else {
+        throw new Error(response?.error || "Failed to generate journal")
+      }
+      
+    } catch (err) {
+      console.error("ChatPage: Error generating journal:", err)
+      setStatusMessage({
+        text: err instanceof Error ? err.message : "Failed to generate journal",
+        type: 'error'
+      })
+    } finally {
+      setIsGeneratingJournal(false)
+    }
   }
 
   const handleIconGroupClick = () => {
@@ -62,6 +381,7 @@ function ChatRoom() {
 
   const handleMicrophoneClick = async () => {
     try {
+      console.log("ChatPage: Toggling microphone")
       const enabled = await toggleMicrophone()
       // Update UI state
       setIsOrbActive(enabled)
@@ -69,8 +389,18 @@ function ChatRoom() {
         text: enabled ? "Voice activated" : "Voice muted",
         type: 'success'
       })
+      
+      if (enabled && !agentDetected) {
+        console.log("ChatPage: Microphone enabled but no agent detected")
+        setTimeout(() => {
+          setStatusMessage({
+            text: "Waiting for agent to connect...",
+            type: 'success'
+          })
+        }, 3500)
+      }
     } catch (err) {
-      console.error("Error toggling microphone:", err)
+      console.error("ChatPage: Error toggling microphone:", err)
       setStatusMessage({
         text: "Failed to toggle microphone",
         type: 'error'
@@ -80,6 +410,44 @@ function ChatRoom() {
 
   const handleOrbClick = () => {
     handleMicrophoneClick()
+  }
+
+  // Add function to handle image capture
+  const handleImageCapture = async (imageUrl: string) => {
+    if (!isConnected || !performRpc || !agentDetected) {
+      setStatusMessage({
+        text: "Please wait for agent to connect",
+        type: 'error'
+      })
+      return
+    }
+    
+    try {
+      console.log("ChatPage: Sending image to agent via RPC")
+      
+      // Call backend's user.add_image method
+      const response = await performRpc('user.add_image', {
+        image_url: imageUrl
+      })
+      
+      console.log("ChatPage: Add image response:", response)
+      
+      if (response?.status === 'success') {
+        setStatusMessage({
+          text: "Image added to journal",
+          type: 'success'
+        })
+      } else {
+        throw new Error(response?.message || "Failed to add image")
+      }
+      
+    } catch (err) {
+      console.error("ChatPage: Error adding image:", err)
+      setStatusMessage({
+        text: err instanceof Error ? err.message : "Failed to add image",
+        type: 'error'
+      })
+    }
   }
 
   return (
@@ -190,19 +558,41 @@ function ChatRoom() {
             )}
           </button>
 
-          {/* Journal Icon */}
-          <button className="w-12 h-12 flex items-center justify-center" onClick={handleJournalClick}>
+          {/* Journal Icon - Now with loading state */}
+          <button 
+            className="w-12 h-12 flex items-center justify-center" 
+            onClick={handleJournalClick}
+            disabled={isGeneratingJournal}
+          >
             <div className="relative">
-              <Image src="/icons/journal-icon.svg" alt="Generate Journal" width={37} height={38} />
+              <Image 
+                src="/icons/journal-icon.svg" 
+                alt="Generate Journal" 
+                width={37} 
+                height={38}
+                className={isGeneratingJournal ? "opacity-50" : ""}
+              />
+              {isGeneratingJournal && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="w-6 h-6 border-2 border-gray-600 border-t-transparent rounded-full animate-spin"></div>
+                </div>
+              )}
               <div className="absolute inset-0 border-2 border-[#606060] rounded-sm opacity-0"></div>
             </div>
           </button>
         </div>
+
+        {/* Remote audio player - invisible but handles audio playback */}
+        <RemoteAudioPlayer />
       </div>
 
       {/* Camera View Overlay */}
       <div className={`absolute inset-0 bottom-[80px] z-40 ${showCamera ? "block" : "hidden"}`}>
-        <CameraView isOpen={showCamera} onClose={handleCloseCamera} />
+        <CameraView 
+          isOpen={showCamera} 
+          onClose={handleCloseCamera}
+          onCapture={handleImageCapture}
+        />
       </div>
 
       {/* Status message toast */}
@@ -223,6 +613,36 @@ function ChatRoom() {
         <div className="absolute bottom-24 left-0 right-0 flex justify-center">
           <div className="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-xs">
             Connecting to voice service...
+          </div>
+        </div>
+      )}
+
+      {/* Agent status indicators */}
+      {isConnected && isMicrophoneEnabled && !agentDetected && (
+        <div className="absolute top-24 left-0 right-0 flex justify-center">
+          <div className="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-xs">
+            Waiting for agent to join...
+          </div>
+        </div>
+      )}
+      
+      {isConnected && agentDetected && (
+        <div className="absolute top-24 left-0 right-0 flex justify-center">
+          <div className={`px-3 py-1 rounded-full text-xs ${
+            agentActive 
+              ? 'bg-green-100 text-green-800' 
+              : 'bg-blue-100 text-blue-800'
+          }`}>
+            {agentActive ? 'Agent speaking...' : 'Agent connected'}
+          </div>
+        </div>
+      )}
+
+      {/* Show connecting indicator */}
+      {isConnecting && (
+        <div className="absolute top-24 left-0 right-0 flex justify-center">
+          <div className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs animate-pulse">
+            Connecting to voice assistant...
           </div>
         </div>
       )}
